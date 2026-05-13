@@ -148,7 +148,7 @@ body {
 
 		<script src="game.js"></script>
 		<script>
-const GODOT_CONFIG = {"args":[],"canvasResizePolicy":0,"emscriptenPoolSize":8,"ensureCrossOriginIsolationHeaders":true,"executable":"game","experimentalVK":false,"fileSizes":{"game.pck":75858152,"game.wasm":37695054},"focusCanvas":true,"gdextensionLibs":[],"godotPoolSize":4};
+const GODOT_CONFIG = {"args":[],"canvasResizePolicy":0,"emscriptenPoolSize":8,"ensureCrossOriginIsolationHeaders":true,"executable":"game","experimentalVK":false,"fileSizes":{"game.pck":75234460,"game.wasm":37695054},"focusCanvas":true,"gdextensionLibs":[],"godotPoolSize":4};
 const GODOT_THREADS_ENABLED = false;
 const engine = new Engine(GODOT_CONFIG);
 
@@ -273,12 +273,66 @@ const engine = new Engine(GODOT_CONFIG);
 		canvas.dispatchEvent(remapped);
 	}
 
-	function blockOriginalTouchEvent(event) {
-		if (!shouldRotateToLandscape) {
+	function createMappedTouch(touch) {
+		const mapped = getMappedClientPosition(touch.clientX, touch.clientY);
+		if (!mapped || typeof Touch === 'undefined') {
+			return null;
+		}
+		return new Touch({
+			identifier: touch.identifier,
+			target: canvas,
+			clientX: mapped.x,
+			clientY: mapped.y,
+			screenX: mapped.x,
+			screenY: mapped.y,
+			pageX: mapped.x + window.scrollX,
+			pageY: mapped.y + window.scrollY,
+			radiusX: touch.radiusX || 1,
+			radiusY: touch.radiusY || 1,
+			rotationAngle: touch.rotationAngle || 0,
+			force: touch.force || 0,
+		});
+	}
+
+	function getMappedTouches(touches) {
+		const mappedTouches = [];
+		for (let index = 0; index < touches.length; index += 1) {
+			const mappedTouch = createMappedTouch(touches[index]);
+			if (mappedTouch) {
+				mappedTouches.push(mappedTouch);
+			}
+		}
+		return mappedTouches;
+	}
+
+	function remapTouchEvent(event) {
+		if (!shouldRotateToLandscape || event.__godotRemapped) {
 			return;
 		}
 		event.preventDefault();
 		event.stopImmediatePropagation();
+		if (typeof TouchEvent === 'undefined' || typeof Touch === 'undefined') {
+			return;
+		}
+
+		const changedTouches = getMappedTouches(event.changedTouches);
+		if (changedTouches.length === 0) {
+			return;
+		}
+		const remapped = new TouchEvent(event.type, {
+			bubbles: true,
+			cancelable: true,
+			composed: true,
+			touches: getMappedTouches(event.touches),
+			targetTouches: getMappedTouches(event.targetTouches),
+			changedTouches,
+			ctrlKey: event.ctrlKey,
+			shiftKey: event.shiftKey,
+			altKey: event.altKey,
+			metaKey: event.metaKey,
+		});
+		Object.defineProperty(remapped, '__godotRemapped', { value: true });
+		canvas.dispatchEvent(remapped);
 	}
 
 	function requestLandscapeOrientation() {
@@ -310,10 +364,10 @@ const engine = new Engine(GODOT_CONFIG);
 	window.addEventListener('pointermove', remapPointerEvent, { capture: true });
 	window.addEventListener('pointerup', remapPointerEvent, { capture: true });
 	window.addEventListener('pointercancel', remapPointerEvent, { capture: true });
-	window.addEventListener('touchstart', blockOriginalTouchEvent, { capture: true, passive: false });
-	window.addEventListener('touchmove', blockOriginalTouchEvent, { capture: true, passive: false });
-	window.addEventListener('touchend', blockOriginalTouchEvent, { capture: true, passive: false });
-	window.addEventListener('touchcancel', blockOriginalTouchEvent, { capture: true, passive: false });
+	window.addEventListener('touchstart', remapTouchEvent, { capture: true, passive: false });
+	window.addEventListener('touchmove', remapTouchEvent, { capture: true, passive: false });
+	window.addEventListener('touchend', remapTouchEvent, { capture: true, passive: false });
+	window.addEventListener('touchcancel', remapTouchEvent, { capture: true, passive: false });
 	window.addEventListener('pointerdown', requestLandscapeOrientation, { once: true });
 	window.addEventListener('touchstart', requestLandscapeOrientation, { once: true });
 	updateMobileLayout();
