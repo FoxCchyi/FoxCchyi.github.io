@@ -29,24 +29,27 @@ body {
 	position: fixed;
 	inset: 0;
 	background: black;
-	display: flex;
-	align-items: center;
-	justify-content: center;
 	overflow: hidden;
 }
 
 #game-frame {
-	position: relative;
-	width: var(--game-width, 1280px);
-	height: var(--game-height, 720px);
+	position: absolute;
+	left: 50%;
+	top: 50%;
+	margin-left: -640px;
+	margin-top: -360px;
+	width: 1280px;
+	height: 720px;
 	background: black;
 	overflow: hidden;
+	transform-origin: center center;
+	transform: rotate(var(--game-rotation, 0deg)) scale(var(--game-scale, 1));
 }
 
 #canvas {
 	display: block;
-	width: var(--game-width, 1280px) !important;
-	height: var(--game-height, 720px) !important;
+	width: 1280px !important;
+	height: 720px !important;
 }
 
 #canvas:focus {
@@ -117,10 +120,6 @@ body {
 	z-index: 1;
 }
 
-body.mobile-portrait #canvas {
-	width: var(--game-width, 1280px) !important;
-	height: var(--game-height, 720px) !important;
-}
 		</style>
 		<link id="-gd-engine-icon" rel="icon" type="image/png" href="game.icon.png" />
 <link rel="apple-touch-icon" href="game.apple-touch-icon.png"/>
@@ -149,13 +148,18 @@ body.mobile-portrait #canvas {
 
 		<script src="game.js"></script>
 		<script>
-const GODOT_CONFIG = {"args":[],"canvasResizePolicy":0,"emscriptenPoolSize":8,"ensureCrossOriginIsolationHeaders":true,"executable":"game","experimentalVK":false,"fileSizes":{"game.pck":53620932,"game.wasm":37695054},"focusCanvas":true,"gdextensionLibs":[],"godotPoolSize":4};
+const GODOT_CONFIG = {"args":[],"canvasResizePolicy":0,"emscriptenPoolSize":8,"ensureCrossOriginIsolationHeaders":true,"executable":"game","experimentalVK":false,"fileSizes":{"game.pck":75858152,"game.wasm":37695054},"focusCanvas":true,"gdextensionLibs":[],"godotPoolSize":4};
 const GODOT_THREADS_ENABLED = false;
 const engine = new Engine(GODOT_CONFIG);
 
 (function () {
+	const GAME_WIDTH = 1280;
+	const GAME_HEIGHT = 720;
+	const canvas = document.getElementById('canvas');
 	const mobileQuery = window.matchMedia('(pointer: coarse), (hover: none)');
 	const portraitQuery = window.matchMedia('(orientation: portrait)');
+	let shouldRotateToLandscape = false;
+	let gameScale = 1;
 
 	function isMobileLike() {
 		return mobileQuery.matches
@@ -165,15 +169,116 @@ const engine = new Engine(GODOT_CONFIG);
 	}
 
 	function updateMobileLayout() {
-		const isMobilePortrait = isMobileLike() && portraitQuery.matches;
-		const logicalWidth = window.innerWidth;
-		const logicalHeight = window.innerHeight;
-		const gameScale = Math.min(logicalWidth / 1280, logicalHeight / 720);
+		const viewport = window.visualViewport || window;
+		const logicalWidth = viewport.width || window.innerWidth;
+		const logicalHeight = viewport.height || window.innerHeight;
+		const isPortraitViewport = logicalHeight > logicalWidth;
+		const isNarrowViewport = Math.min(logicalWidth, logicalHeight) <= 900;
+		shouldRotateToLandscape = isPortraitViewport && (isMobileLike() || isNarrowViewport);
+		const fitWidth = shouldRotateToLandscape ? logicalHeight : logicalWidth;
+		const fitHeight = shouldRotateToLandscape ? logicalWidth : logicalHeight;
+		gameScale = Math.min(fitWidth / GAME_WIDTH, fitHeight / GAME_HEIGHT);
 
-		document.documentElement.style.setProperty('--game-width', (1280 * gameScale) + 'px');
-		document.documentElement.style.setProperty('--game-height', (720 * gameScale) + 'px');
-		document.documentElement.classList.toggle('mobile-portrait', isMobilePortrait);
-		document.body.classList.toggle('mobile-portrait', isMobilePortrait);
+		document.documentElement.style.setProperty('--game-scale', gameScale);
+		document.documentElement.style.setProperty('--game-rotation', shouldRotateToLandscape ? '90deg' : '0deg');
+		document.documentElement.classList.toggle('mobile-portrait', shouldRotateToLandscape);
+		document.body.classList.toggle('mobile-portrait', shouldRotateToLandscape);
+	}
+
+	function getMappedClientPosition(clientX, clientY) {
+		const viewport = window.visualViewport || window;
+		const centerX = (viewport.width || window.innerWidth) * 0.5;
+		const centerY = (viewport.height || window.innerHeight) * 0.5;
+		const localX = GAME_WIDTH * 0.5 + (clientY - centerY) / gameScale;
+		const localY = GAME_HEIGHT * 0.5 - (clientX - centerX) / gameScale;
+
+		if (localX < 0 || localX > GAME_WIDTH || localY < 0 || localY > GAME_HEIGHT) {
+			return null;
+		}
+
+		const rect = canvas.getBoundingClientRect();
+		return {
+			x: rect.left + (localX / GAME_WIDTH) * rect.width,
+			y: rect.top + (localY / GAME_HEIGHT) * rect.height,
+		};
+	}
+
+	function remapPointerEvent(event) {
+		if (!shouldRotateToLandscape || event.__godotRemapped) {
+			return;
+		}
+		const mapped = getMappedClientPosition(event.clientX, event.clientY);
+		if (!mapped) {
+			return;
+		}
+
+		event.preventDefault();
+		event.stopImmediatePropagation();
+
+		const remapped = new PointerEvent(event.type, {
+			bubbles: true,
+			cancelable: true,
+			composed: true,
+			pointerId: event.pointerId,
+			pointerType: event.pointerType,
+			isPrimary: event.isPrimary,
+			button: event.button,
+			buttons: event.buttons,
+			clientX: mapped.x,
+			clientY: mapped.y,
+			screenX: mapped.x,
+			screenY: mapped.y,
+			ctrlKey: event.ctrlKey,
+			shiftKey: event.shiftKey,
+			altKey: event.altKey,
+			metaKey: event.metaKey,
+			pressure: event.pressure,
+			width: event.width,
+			height: event.height,
+		});
+		Object.defineProperty(remapped, '__godotRemapped', { value: true });
+		canvas.dispatchEvent(remapped);
+
+		const mouseTypeByPointerType = {
+			pointerdown: 'mousedown',
+			pointermove: 'mousemove',
+			pointerup: 'mouseup',
+		};
+		const mouseType = mouseTypeByPointerType[event.type];
+		if (mouseType) {
+			dispatchMappedMouseEvent(mouseType, event, mapped);
+		}
+		if (event.type === 'pointerup') {
+			dispatchMappedMouseEvent('click', event, mapped);
+		}
+	}
+
+	function dispatchMappedMouseEvent(type, sourceEvent, mapped) {
+		const remapped = new MouseEvent(type, {
+			bubbles: true,
+			cancelable: true,
+			composed: true,
+			button: sourceEvent.button,
+			buttons: sourceEvent.buttons,
+			clientX: mapped.x,
+			clientY: mapped.y,
+			screenX: mapped.x,
+			screenY: mapped.y,
+			ctrlKey: sourceEvent.ctrlKey,
+			shiftKey: sourceEvent.shiftKey,
+			altKey: sourceEvent.altKey,
+			metaKey: sourceEvent.metaKey,
+		});
+		Object.defineProperty(remapped, '__godotRemapped', { value: true });
+		canvas.dispatchEvent(remapped);
+	}
+
+	function blockOriginalTouchEvent(event) {
+		if (!shouldRotateToLandscape) {
+			return;
+		}
+		event.preventDefault();
+		event.stopImmediatePropagation();
 	}
 
 	function requestLandscapeOrientation() {
@@ -201,6 +306,14 @@ const engine = new Engine(GODOT_CONFIG);
 	listenToQuery(portraitQuery);
 	window.addEventListener('resize', updateMobileLayout);
 	window.addEventListener('orientationchange', updateMobileLayout);
+	window.addEventListener('pointerdown', remapPointerEvent, { capture: true });
+	window.addEventListener('pointermove', remapPointerEvent, { capture: true });
+	window.addEventListener('pointerup', remapPointerEvent, { capture: true });
+	window.addEventListener('pointercancel', remapPointerEvent, { capture: true });
+	window.addEventListener('touchstart', blockOriginalTouchEvent, { capture: true, passive: false });
+	window.addEventListener('touchmove', blockOriginalTouchEvent, { capture: true, passive: false });
+	window.addEventListener('touchend', blockOriginalTouchEvent, { capture: true, passive: false });
+	window.addEventListener('touchcancel', blockOriginalTouchEvent, { capture: true, passive: false });
 	window.addEventListener('pointerdown', requestLandscapeOrientation, { once: true });
 	window.addEventListener('touchstart', requestLandscapeOrientation, { once: true });
 	updateMobileLayout();
