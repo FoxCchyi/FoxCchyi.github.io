@@ -1,25 +1,52 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh-CN">
 	<head>
 		<meta charset="utf-8">
-		<meta name="viewport" content="width=device-width, user-scalable=no, initial-scale=1.0">
+		<meta name="viewport" content="width=device-width, user-scalable=no, initial-scale=1.0, viewport-fit=cover">
 		<title>liukanshan</title>
 		<style>
-html, body, #canvas {
+html, body, #game-root, #game-frame, #canvas {
 	margin: 0;
 	padding: 0;
 	border: 0;
 }
 
+html, body {
+	width: 100%;
+	height: 100%;
+	background: black;
+	overflow: hidden;
+}
+
 body {
 	color: white;
-	background-color: black;
-	overflow: hidden;
 	touch-action: none;
+	-webkit-user-select: none;
+	user-select: none;
+}
+
+#game-root {
+	position: fixed;
+	inset: 0;
+	background: black;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	overflow: hidden;
+}
+
+#game-frame {
+	position: relative;
+	width: var(--game-width, 1280px);
+	height: var(--game-height, 720px);
+	background: black;
+	overflow: hidden;
 }
 
 #canvas {
 	display: block;
+	width: var(--game-width, 1280px) !important;
+	height: var(--game-height, 720px) !important;
 }
 
 #canvas:focus {
@@ -89,33 +116,96 @@ body {
 	text-align: center;
 	z-index: 1;
 }
+
+body.mobile-portrait #canvas {
+	width: var(--game-width, 1280px) !important;
+	height: var(--game-height, 720px) !important;
+}
 		</style>
 		<link id="-gd-engine-icon" rel="icon" type="image/png" href="game.icon.png" />
 <link rel="apple-touch-icon" href="game.apple-touch-icon.png"/>
 
+		<link id="-gd-engine-icon" rel="icon" type="image/png" href="game.icon.png" />
+		<link rel="apple-touch-icon" href="game.apple-touch-icon.png"/>
 	</head>
 	<body>
-		<canvas id="canvas">
-			Your browser does not support the canvas tag.
-		</canvas>
+		<div id="game-root">
+			<div id="game-frame">
+				<canvas id="canvas" width="1280" height="720">
+					Your browser does not support the canvas tag.
+				</canvas>
+
+				<div id="status">
+					<img id="status-splash" class="show-image--true fullsize--true use-filter--true" src="game.png" alt="">
+					<progress id="status-progress"></progress>
+					<div id="status-notice"></div>
+				</div>
+			</div>
+		</div>
 
 		<noscript>
 			Your browser does not support JavaScript.
 		</noscript>
 
-		<div id="status">
-			<img id="status-splash" class="show-image--true fullsize--true use-filter--true" src="game.png" alt="">
-			<progress id="status-progress"></progress>
-			<div id="status-notice"></div>
-		</div>
-
 		<script src="game.js"></script>
 		<script>
-const GODOT_CONFIG = {"args":[],"canvasResizePolicy":2,"emscriptenPoolSize":8,"ensureCrossOriginIsolationHeaders":true,"executable":"game","experimentalVK":false,"fileSizes":{"game.pck":53618660,"game.wasm":37695054},"focusCanvas":true,"gdextensionLibs":[],"godotPoolSize":4};
+const GODOT_CONFIG = {"args":[],"canvasResizePolicy":0,"emscriptenPoolSize":8,"ensureCrossOriginIsolationHeaders":true,"executable":"game","experimentalVK":false,"fileSizes":{"game.pck":53618612,"game.wasm":37695054},"focusCanvas":true,"gdextensionLibs":[],"godotPoolSize":4};
 const GODOT_THREADS_ENABLED = false;
 const engine = new Engine(GODOT_CONFIG);
 
 (function () {
+	const mobileQuery = window.matchMedia('(pointer: coarse), (hover: none)');
+	const portraitQuery = window.matchMedia('(orientation: portrait)');
+
+	function isMobileLike() {
+		return mobileQuery.matches
+			|| navigator.maxTouchPoints > 1
+			|| /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent)
+			|| window.innerWidth <= 768;
+	}
+
+	function updateMobileLayout() {
+		const isMobilePortrait = isMobileLike() && portraitQuery.matches;
+		const logicalWidth = window.innerWidth;
+		const logicalHeight = window.innerHeight;
+		const gameScale = Math.min(logicalWidth / 1280, logicalHeight / 720);
+
+		document.documentElement.style.setProperty('--game-width', (1280 * gameScale) + 'px');
+		document.documentElement.style.setProperty('--game-height', (720 * gameScale) + 'px');
+		document.documentElement.classList.toggle('mobile-portrait', isMobilePortrait);
+		document.body.classList.toggle('mobile-portrait', isMobilePortrait);
+	}
+
+	function requestLandscapeOrientation() {
+		if (document.documentElement.requestFullscreen && !document.fullscreenElement) {
+			document.documentElement.requestFullscreen().catch(function () {
+				// Fullscreen usually requires a user gesture; keep the game clickable if the browser refuses.
+			});
+		}
+		if (screen.orientation && screen.orientation.lock) {
+			screen.orientation.lock('landscape').catch(function () {
+				// Browsers commonly require fullscreen or a user gesture; keep the unrotated layout if it fails.
+			});
+		}
+	}
+
+	function listenToQuery(query) {
+		if (query.addEventListener) {
+			query.addEventListener('change', updateMobileLayout);
+		} else if (query.addListener) {
+			query.addListener(updateMobileLayout);
+		}
+	}
+
+	listenToQuery(mobileQuery);
+	listenToQuery(portraitQuery);
+	window.addEventListener('resize', updateMobileLayout);
+	window.addEventListener('orientationchange', updateMobileLayout);
+	window.addEventListener('pointerdown', requestLandscapeOrientation, { once: true });
+	window.addEventListener('touchstart', requestLandscapeOrientation, { once: true });
+	updateMobileLayout();
+	requestLandscapeOrientation();
+
 	const statusOverlay = document.getElementById('status');
 	const statusProgress = document.getElementById('status-progress');
 	const statusNotice = document.getElementById('status-notice');
@@ -167,36 +257,7 @@ const engine = new Engine(GODOT_CONFIG);
 	});
 
 	if (missing.length !== 0) {
-		if (GODOT_CONFIG['serviceWorker'] && GODOT_CONFIG['ensureCrossOriginIsolationHeaders'] && 'serviceWorker' in navigator) {
-			let serviceWorkerRegistrationPromise;
-			try {
-				serviceWorkerRegistrationPromise = navigator.serviceWorker.getRegistration();
-			} catch (err) {
-				serviceWorkerRegistrationPromise = Promise.reject(new Error('Service worker registration failed.'));
-			}
-			// There's a chance that installing the service worker would fix the issue
-			Promise.race([
-				serviceWorkerRegistrationPromise.then((registration) => {
-					if (registration != null) {
-						return Promise.reject(new Error('Service worker already exists.'));
-					}
-					return registration;
-				}).then(() => engine.installServiceWorker()),
-				// For some reason, `getRegistration()` can stall
-				new Promise((resolve) => {
-					setTimeout(() => resolve(), 2000);
-				}),
-			]).then(() => {
-				// Reload if there was no error.
-				window.location.reload();
-			}).catch((err) => {
-				console.error('Error while registering service worker:', err);
-			});
-		} else {
-			// Display the message as usual
-			const missingMsg = 'Error\nThe following features required to run Godot projects on the Web are missing:\n';
-			displayFailureNotice(missingMsg + missing.join('\n'));
-		}
+		displayFailureNotice('Error\nThe following features required to run Godot projects on the Web are missing:\n' + missing.join('\n'));
 	} else {
 		setStatusMode('progress');
 		engine.startGame({
